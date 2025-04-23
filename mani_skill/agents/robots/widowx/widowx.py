@@ -60,3 +60,46 @@ class WidowX250S(BaseAgent):
             rforce >= min_force, torch.rad2deg(rangle) <= max_angle
         )
         return torch.logical_and(lflag, rflag)
+    
+    def _after_init(self):
+        super()._after_init()
+        
+        self.base_link = [x for x in self.robot.get_links() if x.name == "base_link"][0]
+        self.ee_link = [x for x in self.robot.get_links() if x.name == "ee_gripper_link"][0]
+
+    @property
+    def base_pose(self):
+        return self.base_link.pose
+    
+    @property
+    def ee_pose(self):
+        return self.ee_link.pose
+
+
+    @property
+    def gripper_closedness(self) -> np.ndarray:
+        """
+        Returns:
+            closedness: np.ndarray of shape [batch, 1], values in [0, 1],
+                        where 0 means fully open and 1 means fully closed.
+        """
+        # get_qpos() -> (B, 7), get_qlimits() -> (B, 7, 2)
+        qpos = self.robot.get_qpos()           # torch.Tensor, shape (B, 7)
+        qlimits = self.robot.get_qlimits()     # torch.Tensor, shape (B, 7, 2)
+
+        # pick off the last two joints (the gripper fingers)
+        finger_qpos = qpos[:, -2:]             # shape (B, 2)
+        finger_qlim = qlimits[:, -2:, :]       # shape (B, 2, 2)
+
+        # split limits: upper & lower each (B, 2)
+        lower = finger_qlim[..., 0]
+        upper = finger_qlim[..., 1]
+
+        # compute per-finger closedness: (upper − pos) ÷ (upper − lower)
+        closedness = (upper - finger_qpos) / (upper - lower)  # shape (B, 2)
+
+        # average fingers, keep a singleton dim -> (B, 1)
+        mean_closedness = closedness.mean(dim=1, keepdim=True)
+
+        # clamp to ≥ 0 (you could also do `.clamp(0.0, 1.0)` if you want an upper bound)
+        return mean_closedness.clamp_min(0.0)

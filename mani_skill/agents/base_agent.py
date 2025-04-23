@@ -8,6 +8,7 @@ import numpy as np
 import sapien
 import torch
 from gymnasium import spaces
+from transforms3d.quaternions import mat2quat
 
 from mani_skill import format_path
 from mani_skill.agents.controllers.pd_joint_pos import (
@@ -334,7 +335,16 @@ class BaseAgent:
         """
         Get the proprioceptive state of the agent, default is the qpos and qvel of the robot and any controller state.
         """
+        ### NOTE: Added by Irving ###
         obs = dict(qpos=self.robot.get_qpos(), qvel=self.robot.get_qvel())
+        base_pose = self.base_pose # wxyz format for Quaternions according to https://maniskill.readthedocs.io/en/latest/user_guide/concepts/simulation_101.html
+        ee_pose = self.ee_pose
+        ee_in_base = base_pose.inv() * ee_pose
+        gripper_nwidth = 1 - self.gripper_closedness
+        eef_pos = torch.cat([ee_in_base.raw_pose, gripper_nwidth], dim=1)
+        obs = dict(qpos=self.robot.get_qpos(), qvel=self.robot.get_qvel(), eef_pos=eef_pos)
+        ### NOTE: Ended ###
+
         controller_state = self.controller.get_state()
         if len(controller_state) > 0:
             obs.update(controller=controller_state)
