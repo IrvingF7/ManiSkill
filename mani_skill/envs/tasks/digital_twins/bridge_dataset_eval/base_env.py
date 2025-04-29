@@ -45,7 +45,8 @@ class WidowX250SBridgeDatasetFlatTable(WidowX250S):
                 uid="3rd_view_camera",  # the camera used in the Bridge dataset
                 pose=sapien.Pose(
                     [0.00, -0.16, 0.36],
-                    [0.8992917, -0.09263245, 0.35892478, 0.23209205],
+                    # [0.8992917, -0.09263245, 0.35892478, 0.23209205],
+                    [0.909182, -0.0819809, 0.347277, 0.214629] #! original q in MS2
                 ),
                 width=640,
                 height=480,
@@ -169,6 +170,8 @@ class BaseBridgeEnv(BaseDigitalTwinEnv):
         obj_names: List[str],
         xyz_configs: torch.Tensor,
         quat_configs: torch.Tensor,
+        model_db_loaded: bool = False, # added these two boolean flags so that we can override model_db and rgb_overlay_paths in the CustomBridgeEnv
+        rgb_overlay_paths_loaded: bool = False,
         **kwargs,
     ):
         self.objs: Dict[str, Actor] = dict()
@@ -178,23 +181,26 @@ class BaseBridgeEnv(BaseDigitalTwinEnv):
         self.xyz_configs = xyz_configs
         self.quat_configs = quat_configs
         if self.scene_setting == "flat_table":
-            self.rgb_overlay_paths = {
-                "3rd_view_camera": str(
-                    BRIDGE_DATASET_ASSET_PATH / "real_inpainting/bridge_real_eval_1.png"
-                )
-            }
+            if not rgb_overlay_paths_loaded:
+                self.rgb_overlay_paths = {
+                    "3rd_view_camera": str(
+                        BRIDGE_DATASET_ASSET_PATH / "real_inpainting/bridge_real_eval_1.png"
+                    )
+                }
             robot_cls = WidowX250SBridgeDatasetFlatTable
         elif self.scene_setting == "sink":
-            self.rgb_overlay_paths = {
-                "3rd_view_camera": str(
-                    BRIDGE_DATASET_ASSET_PATH / "real_inpainting/bridge_sink.png"
-                )
-            }
+            if not rgb_overlay_paths_loaded:
+                self.rgb_overlay_paths = {
+                    "3rd_view_camera": str(
+                        BRIDGE_DATASET_ASSET_PATH / "real_inpainting/bridge_sink.png"
+                    )
+                }
             robot_cls = WidowX250SBridgeDatasetSink
-
-        self.model_db: Dict[str, Dict] = io_utils.load_json(
-            BRIDGE_DATASET_ASSET_PATH / "custom/" / self.MODEL_JSON
-        )
+                
+        if not model_db_loaded:
+            self.model_db: Dict[str, Dict] = io_utils.load_json(
+                BRIDGE_DATASET_ASSET_PATH / "custom/" / self.MODEL_JSON
+            )
         super().__init__(
             robot_uids=robot_cls,
             **kwargs,
@@ -300,8 +306,8 @@ class BaseBridgeEnv(BaseDigitalTwinEnv):
         builder.initial_pose = sapien.Pose(-scene_offset)
         builder.build_static(name="arena")
 
-        for name in self.obj_names:
-            self.objs[name] = self._build_actor_helper(name)
+        # for name in self.obj_names:
+        #     self.objs[name] = self._build_actor_helper(name)
 
         self.xyz_configs = common.to_tensor(self.xyz_configs, device=self.device).to(
             torch.float32
@@ -320,20 +326,23 @@ class BaseBridgeEnv(BaseDigitalTwinEnv):
         model_scales = None
         if model_scales is None:
             model_scales = dict()
-            for model_id in [self.source_obj_name, self.target_obj_name]:
+            for model_id in self.obj_names:
                 this_available_model_scales = self.model_db[model_id].get(
                     "scales", None
                 )
                 if this_available_model_scales is None:
-                    model_scales.append(1.0)
+                    model_scales[model_id] = 1.0
                 else:
                     # TODO (stao): use the batched RNG
                     model_scales[model_id] = self.np_random.choice(
                         this_available_model_scales
                     )
         self.episode_model_scales = model_scales
+        # * move the obj loading down here to use the model_scales
+        for name in self.obj_names:
+            self.objs[name] = self._build_actor_helper(name, scale=self.episode_model_scales[name])
         model_bbox_sizes = dict()
-        for model_id in [self.source_obj_name, self.target_obj_name]:
+        for model_id in self.obj_names:
             model_info = self.model_db[model_id]
             model_scale = self.episode_model_scales[model_id]
             if "bbox" in model_info:
@@ -560,3 +569,46 @@ class BaseBridgeEnv(BaseDigitalTwinEnv):
     def is_final_subtask(self):
         # whether the current subtask is the final one, only meaningful for long-horizon tasks
         return True
+
+# * my customed bridge envs for changing the model_db and the rgb_overlay_paths
+class CustomBridgeEnv(BaseBridgeEnv):
+    """A custom bridge environment that allows custom initialization of key attributes while keeping other functionality the same as BaseBridgeEnv"""
+    
+    MODEL_JSON = "info_bridge_custom_aqua.json"
+    
+    def __init__(
+        self,
+        obj_names: List[str],
+        xyz_configs: torch.Tensor,
+        quat_configs: torch.Tensor,
+        **kwargs,
+    ):
+        if self.scene_setting == "flat_table":
+            self.rgb_overlay_paths = {
+                "3rd_view_camera": str(
+                    # BRIDGE_DATASET_ASSET_PATH / "real_inpainting/bridge_real_eval_1.png"
+                    BRIDGE_DATASET_ASSET_PATH / "real_inpainting/bridge_real_eval_1_rabbit.JPG"
+                )
+            }
+            robot_cls = WidowX250SBridgeDatasetFlatTable
+        elif self.scene_setting == "sink":
+            self.rgb_overlay_paths = {
+                "3rd_view_camera": str(
+                    BRIDGE_DATASET_ASSET_PATH / "real_inpainting/bridge_sink.png"
+                )
+            }
+            robot_cls = WidowX250SBridgeDatasetSink
+
+        self.model_db: Dict[str, Dict] = io_utils.load_json(
+            BRIDGE_DATASET_ASSET_PATH / "custom/" / self.MODEL_JSON
+        )
+        
+        # Call parent class init with remaining kwargs
+        super().__init__(
+            obj_names=obj_names,
+            xyz_configs=xyz_configs,
+            quat_configs=quat_configs,
+            model_db_loaded=True,
+            rgb_overlay_paths_loaded=True,
+            **kwargs
+        )

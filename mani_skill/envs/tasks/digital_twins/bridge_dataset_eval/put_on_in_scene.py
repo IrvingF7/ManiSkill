@@ -4,7 +4,7 @@ import torch
 from transforms3d.euler import euler2quat
 
 from mani_skill.envs.tasks.digital_twins.bridge_dataset_eval.base_env import (
-    BaseBridgeEnv,
+    BaseBridgeEnv, CustomBridgeEnv
 )
 from mani_skill.utils.registration import register_env
 
@@ -270,3 +270,163 @@ class PutSpoonOnTableClothInScene(BaseBridgeEnv):
 
     def get_language_instruction(self, **kwargs):
         return ["put the spoon on the towel"] * self.num_envs
+
+
+# ! newly added tasks
+
+@register_env(
+    "PutEggplantOnCarrotInScene-v1",
+    max_episode_steps=60,
+    asset_download_ids=["bridge_v2_real2sim"],
+)
+class PutEggplantOnCarrotInScene(CustomBridgeEnv):
+    scene_setting = "flat_table"
+    objects_excluded_from_greenscreening = [
+        "eggplant",
+        "bridge_carrot_generated_modified",
+        "bridge_plate_objaverse_larger",
+        "bridge_spoon_generated_modified",
+    ]
+
+    def __init__(self, **kwargs):
+        xy_center = np.array([-0.16, 0.00])
+        half_edge_length_x = 0.075
+        half_edge_length_y = 0.075
+        grid_pos = np.array([[0, 0], [0, 1], [1, 0], [1, 1]]) * 2 - 1
+        grid_pos = (
+            grid_pos * np.array([half_edge_length_x, half_edge_length_y])[None]
+            + xy_center[None]
+        )
+
+        xyz_configs = []
+        for i, grid_pos_1 in enumerate(grid_pos):
+            for j, grid_pos_2 in enumerate(grid_pos):
+                if i != j:
+                    # add additional objects to the scene
+                    additional_xys = [grid_pos[k] for k in range(len(grid_pos)) if k != i and k != j]
+                    xyz_configs.append(
+                        np.array(
+                            [
+                                np.append(grid_pos_1, 0.887529), # this is the eggplant
+                                np.append(grid_pos_2, 0.869532), # this is the carrot
+                                # TODO: need to figure out why this z is specified, this is different from MS2
+                                np.append(additional_xys[0], 0.869532), # this is the plate
+                                np.append(additional_xys[1], 0.869532), # this is the spoon.
+                            ]
+                        )
+                    )
+        xyz_configs = torch.tensor(np.stack(xyz_configs))
+        quat_configs = torch.tensor(
+            np.stack(
+                [
+                    np.array([
+                        euler2quat(0, 0, 0, 'sxyz'),  # eggplant
+                        euler2quat(0, 0, np.pi),  # carrot
+                        [1, 0, 0, 0],  # plate
+                        [1, 0, 0, 0],  # spoon, following the original config in their separate two-object env
+                    ]), # size: 4 x 4
+                    np.array([
+                        euler2quat(0, 0, 1 * np.pi / 4, 'sxyz'),  # eggplant
+                        euler2quat(0, 0, -np.pi/2),  # carrot
+                        [1, 0, 0, 0],  # plate
+                        euler2quat(0, 0, np.pi/2),  # spoon
+                    ])
+                ]
+            )
+        )
+        source_obj_name = "eggplant"
+        target_obj_name = "bridge_carrot_generated_modified"
+        super().__init__(
+            obj_names=[source_obj_name, target_obj_name, "bridge_plate_objaverse_larger", "bridge_spoon_generated_modified"],
+            xyz_configs=xyz_configs,
+            quat_configs=quat_configs,
+            **kwargs,
+        )
+
+    def evaluate(self):
+        info = super()._evaluate(
+            success_require_src_completely_on_target=True,
+        )
+        return info
+
+    def get_language_instruction(self, **kwargs):
+        return ["Lay the eggplant on top of the carrot"] * self.num_envs
+    
+
+@register_env(
+    "PutCokeCanOnPlateInScene-v1",
+    max_episode_steps=60,
+    asset_download_ids=["bridge_v2_real2sim"],
+)
+class PutCokeCanOnPlateInScene(CustomBridgeEnv):
+    scene_setting = "flat_table"
+    objects_excluded_from_greenscreening = [
+        "coke_can",
+        "bridge_plate_objaverse_larger",
+        "bridge_carrot_generated_modified",
+        "bridge_spoon_generated_modified",
+    ]
+    def __init__(self, **kwargs):
+        xy_center = np.array([-0.16, 0.00])
+        half_edge_length_x = 0.075
+        half_edge_length_y = 0.075
+        grid_pos = np.array([[0, 0], [0, 1], [1, 0], [1, 1]]) * 2 - 1
+        grid_pos = (
+            grid_pos * np.array([half_edge_length_x, half_edge_length_y])[None]
+            + xy_center[None]
+        )
+        
+        xyz_configs = []
+        for i, grid_pos_1 in enumerate(grid_pos):
+            for j, grid_pos_2 in enumerate(grid_pos):
+                if i != j:
+                    # add additional objects to the scene
+                    additional_xys = [grid_pos[k] for k in range(len(grid_pos)) if k != i and k != j]
+                    xyz_configs.append(
+                        np.array(
+                            [
+                                np.append(grid_pos_1, 0.887529), # this is the coke can
+                                np.append(grid_pos_2, 0.869532), # this is the plate
+                                np.append(additional_xys[0], 0.869532), # this is the carrot
+                                np.append(additional_xys[1], 0.869532), # this is the spoon.
+                            ]
+                        )
+                    )
+        xyz_configs = torch.tensor(np.stack(xyz_configs))
+        
+        # define rotatinos for all objects
+        quat_configs = torch.tensor(
+            np.stack(
+                [
+                    np.array([
+                        euler2quat(np.pi/2, 0, 0),  # upright can
+                        [1, 0, 0, 0],  # plate
+                        euler2quat(0, 0, np.pi),  # carrot
+                        [1, 0, 0, 0],  # spoon, following the original config in their separate two-object env
+                    ]), # size: 4 x 4
+                    np.array([
+                        euler2quat(0, 0, np.pi/2),  # lay vertically can
+                        [1, 0, 0, 0],  # plate
+                        euler2quat(0, 0, -np.pi/2),  # carrot
+                        euler2quat(0, 0, np.pi/2),  # spoon
+                    ])
+                ]
+            )
+        )
+        source_obj_name = "coke_can"
+        target_obj_name = "bridge_plate_objaverse_larger"
+        super().__init__(
+            obj_names=[source_obj_name, target_obj_name, "bridge_carrot_generated_modified", "bridge_spoon_generated_modified"],
+            xyz_configs=xyz_configs,
+            quat_configs=quat_configs,  
+            **kwargs,
+        )
+
+    def evaluate(self):
+        info = super()._evaluate(
+            success_require_src_completely_on_target=True,
+        )
+        return info
+
+    def get_language_instruction(self, **kwargs):
+        return ["put the coke can on the plate"] * self.num_envs
